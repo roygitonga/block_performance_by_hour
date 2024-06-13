@@ -1,0 +1,122 @@
+<?php
+// This file is part of Moodle - http://moodle.org/
+//
+// Moodle is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// Moodle is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with Moodle. If not, see <http://www.gnu.org/licenses/>.
+
+class block_performance_by_hour extends block_base {
+
+    public function init() {
+        $this->title = get_string('pluginname', 'block_performance_by_hour');
+    }
+
+    public function get_content() {
+        global $USER, $DB;
+
+        if ($this->content !== null) {
+            return $this->content;
+        }
+
+        // SQL query to get current user's logins per hour
+        $userLoginQuery = "
+           
+WITH Hours AS (
+    SELECT '12AM' AS hour_of_day
+    UNION SELECT '01AM' UNION SELECT '02AM' UNION SELECT '03AM'
+    UNION SELECT '04AM' UNION SELECT '05AM' UNION SELECT '06AM'
+    UNION SELECT '07AM' UNION SELECT '08AM' UNION SELECT '09AM'
+    UNION SELECT '10AM' UNION SELECT '11AM' UNION SELECT '12PM'
+    UNION SELECT '01PM' UNION SELECT '02PM' UNION SELECT '03PM'
+    UNION SELECT '04PM' UNION SELECT '05PM' UNION SELECT '06PM'
+    UNION SELECT '07PM' UNION SELECT '08PM' UNION SELECT '09PM'
+    UNION SELECT '10PM' UNION SELECT '11PM'
+),
+-- Count logins per hour for the specified user within the last 24 hours
+LoginsPerHour AS (
+    SELECT
+        DATE_FORMAT(FROM_UNIXTIME(timecreated), '%I%p') AS hour_of_day,
+        COUNT(*) AS num_logins
+    FROM
+        mdl_logstore_standard_log
+    WHERE
+        userid = ".$USER->id."
+        AND action = 'loggedin'
+        AND timecreated >= UNIX_TIMESTAMP(DATE_SUB(NOW(), INTERVAL 1 DAY))
+    GROUP BY
+        hour_of_day
+)
+-- Left join the generated hour table with the logins per hour table to fill in zeros
+SELECT
+    Hours.hour_of_day,
+    COALESCE(LoginsPerHour.num_logins, 0) AS num_logins
+FROM
+    Hours
+LEFT JOIN
+    LoginsPerHour ON Hours.hour_of_day = LoginsPerHour.hour_of_day
+ORDER BY
+    Hours.hour_of_day;
+
+        ";
+
+        $userLoginData = $DB->get_records_sql($userLoginQuery);
+
+        // Prepare data for the chart
+        $chartLabels = [];
+        $chartData = [];
+
+        foreach ($userLoginData as $data) {
+            $chartLabels[] = $data->hour_of_day;
+            $chartData[] = $data->num_logins;
+        }
+
+        // Ensure there are data points for all hours (e.g., 12AM to 11PM)
+        $allHours = ['12AM', '1AM', '2AM', '3AM', '4AM', '5AM', '6AM', '7AM', '8AM', '9AM', '10AM', '11AM', 
+                     '12PM', '1PM', '2PM', '3PM', '4PM', '5PM', '6PM', '7PM', '8PM', '9PM', '10PM', '11PM'];
+        $chartLabels = array_merge(array_diff($allHours, $chartLabels), $chartLabels);
+        $chartData = array_pad($chartData, count($allHours), 0);
+
+        // Chart.js code to render bar chart
+        $this->content = new stdClass();
+        $this->content->text = "
+            <p><canvas id='perform' width='580' height='350' aria-label='chart'></canvas>
+</p>
+<p>
+  <script>
+    var chrt = document.getElementById('perform').getContext('2d');
+    var chartId2 = new Chart(chrt, {
+      type: 'bar',
+      data: {
+        labels: ['6P', '7P', '8P', '9P', '10P', '11P'],
+        datasets: [{
+          label: 'PERFORMANCE TIMES',
+          data: [20, 40, 30, 35, 30, 20],
+          backgroundColor: ['#0aa630', '#0aa630', '#0aa630', '#0aa630',
+            '#0aa630', '#0aa630'
+          ],
+
+
+        }],
+      },
+      options: {
+        responsive: true,
+      },
+    });
+  </script>
+</p>
+        ";
+        $this->content->footer = '';
+
+        return $this->content;
+    }
+}
+
